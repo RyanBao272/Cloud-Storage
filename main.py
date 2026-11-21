@@ -2,21 +2,23 @@ import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from database import init_db, get_connection
-from auth import hash_password
+from auth import hash_password, check_password, create_token
 
 os.makedirs("storage", exist_ok=True)
 init_db()
-
 app = FastAPI()
 
 class UserCreate(BaseModel):
     username: str
     password: str
 
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
 @app.get("/")
 def read_root():
     return {"message": "my drive is alive"}
-
 
 @app.get("/tables")
 def list_tables():
@@ -25,6 +27,7 @@ def list_tables():
     conn.close()
     return {"tables": [row["name"] for row in rows]}
 
+
 @app.post("/register")
 def register(user: UserCreate):
     if len(user.username) < 3:
@@ -32,10 +35,9 @@ def register(user: UserCreate):
     if len(user.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     if len(user.password.encode()) > 72:
-        raise HTTPException(status_code=400, detail="Password must be at most 72 bytes")
+        raise HTTPException(status_code=400, detail="Password can't be more than 72 bytes")
 
     conn = get_connection()
-
     existing = conn.execute(
         "SELECT id FROM users WHERE username = ?", (user.username,)
     ).fetchone()
@@ -51,5 +53,16 @@ def register(user: UserCreate):
     conn.commit()
     new_id = cursor.lastrowid
     conn.close()
-
     return {"id": new_id, "username": user.username}
+
+@app.post("/login")
+def login(user: UserLogin):
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id, password_hash FROM users WHERE username = ?", (user.username,)
+    ).fetchone()
+    conn.close()
+    if row is None or not check_password(user.password, row["password_hash"]):
+        raise HTTPException(status_code=401, detail="Wrong username or password")
+    token = create_token(row["id"])
+    return {"access_token": token, "token_type": "bearer"}
