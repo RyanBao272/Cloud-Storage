@@ -29,3 +29,10 @@ def create_token(user_id):
     expires = datetime.now(timezone.utc) + timedelta(minutes=TOKEN_MINUTES)
     payload = {"sub": str(user_id), "exp": expires}
     return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+
+def decode_token(token):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+    except jwt.InvalidTokenError:
+        return None
+    return int(payload["sub"])

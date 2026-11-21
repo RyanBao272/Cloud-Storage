@@ -1,12 +1,14 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from database import init_db, get_connection
-from auth import hash_password, check_password, create_token
+from auth import hash_password, check_password, create_token, decode_token
 
 os.makedirs("storage", exist_ok=True)
 init_db()
 app = FastAPI()
+bearer = HTTPBearer()
 
 class UserCreate(BaseModel):
     username: str
@@ -66,3 +68,19 @@ def login(user: UserLogin):
         raise HTTPException(status_code=401, detail="Wrong username or password")
     token = create_token(row["id"])
     return {"access_token": token, "token_type": "bearer"}
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
+    token = credentials.credentials
+    user_id = decode_token(token)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    conn = get_connection()
+    row = conn.execute("SELECT id, username FROM users WHERE id = ?", (user_id,)).fetchone()
+    conn.close()
+    if row is None:
+        raise HTTPException(status_code=401, detail="User no longer exists")
+    return {"id": row["id"], "username": row["username"]}
+
+@app.get("/me")
+def me(current_user: dict = Depends(get_current_user)):
+    return current_user
