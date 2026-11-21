@@ -19,8 +19,8 @@ class UserLogin(BaseModel):
     password: str
 
 @app.get("/")
-def read_root():
-    return {"message": "my drive is alive"}
+def home_page():
+    return FileResponse("static/index.html")
 
 @app.get("/tables")
 def list_tables():

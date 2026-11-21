@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>My Drive</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 700px;
+            margin: 40px auto;
+            padding: 0 16px;
+            background: #f5f5f5;
+            color: #222;
+        }
+        .box {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        input {
+            padding: 8px;
+            margin: 4px 0;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        button {
+            padding: 8px 14px;
+            margin: 4px 4px 4px 0;
+            border: none;
+            border-radius: 4px;
+            background: #1a73e8;
+            color: white;
+            cursor: pointer;
+        }
+        button.gray { background: #777; }
+        button.red { background: #d93025; }
+        table { width: 100%; border-collapse: collapse; }
+        td { padding: 8px 4px; border-bottom: 1px solid #eee; }
+        #message { color: #d93025; min-height: 20px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <h1>My Drive</h1>
+    <p id="message"></p>
+
+    <!-- shown when logged out -->
+    <div id="login-box" class="box">
+        <h2>Log in</h2>
+        <input id="username" placeholder="Username">
+        <input id="password" type="password" placeholder="Password">
+        <button onclick="login()">Log in</button>
+        <button class="gray" onclick="register()">Register</button>
+    </div>
+
+    <!-- shown when logged in -->
+    <div id="drive-box" class="hidden">
+        <div class="box">
+            <p>Logged in as <b id="who"></b></p>
+            <button class="gray" onclick="logout()">Log out</button>
+        </div>
+
+        <div class="box">
+            <h2>Upload</h2>
+            <input id="file-input" type="file">
+            <button onclick="uploadFile()">Upload</button>
+        </div>
+
+        <div class="box">
+            <h2>My files</h2>
+            <table id="file-table"></table>
+        </div>
+    </div>
+
+    <script>
+        // the token from /login, saved in the browser so a page refresh keeps you logged in
+        let token = localStorage.getItem("token");
+
+        function showMessage(text) {
+            document.getElementById("message").textContent = text;
+        }
+
+        function authHeader() {
+            return { "Authorization": "Bearer " + token };
+        }
+
+        async function register() {
+            const username = document.getElementById("username").value;
+            const password = document.getElementById("password").value;
+
+            const response = await fetch("/register", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username: username, password: password }),
+            });
+            const data = await response.json();
+
+            if (response.ok) {
+                showMessage("Account created. Now log in.");
+            } else {
+                showMessage(data.detail);
+            }
+        }
+
+        async function login() {
+            const username = document.getElementById("username").value;
+            const password = document.getElementById("password").value;
+
+            const response = await fetch("/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username: username, password: password }),
+            });
+            const data = await response.json();
+
+            if (response.ok) {
+                token = data.access_token;
+                localStorage.setItem("token", token);
+                showMessage("");
+                showDrive();
+            } else {
+                showMessage(data.detail);
+            }
+        }
+
+        function logout() {
+            token = null;
+            localStorage.removeItem("token");
+            document.getElementById("drive-box").classList.add("hidden");
+            document.getElementById("login-box").classList.remove("hidden");
+        }
+
+        async function showDrive() {
+            // ask /me who we are; if the token expired, go back to the login screen
+            const response = await fetch("/me", { headers: authHeader() });
+            if (!response.ok) {
+                logout();
+                showMessage("Please log in again.");
+                return;
+            }
+            const user = await response.json();
+
+            document.getElementById("who").textContent = user.username;
+            document.getElementById("login-box").classList.add("hidden");
+            document.getElementById("drive-box").classList.remove("hidden");
+            loadFiles();
+        }
+
+        async function loadFiles() {
+            const response = await fetch("/files", { headers: authHeader() });
+            const files = await response.json();
+
+            const table = document.getElementById("file-table");
+            table.innerHTML = "";
+
+            if (files.length === 0) {
+                table.innerHTML = "<tr><td>No files yet.</td></tr>";
+                return;
+            }
+
+            for (const file of files) {
+                const row = document.createElement("tr");
+
+                const nameCell = document.createElement("td");
+                nameCell.textContent = file.filename;  // textContent, so a filename can't inject HTML
+
+                const sizeCell = document.createElement("td");
+                sizeCell.textContent = formatSize(file.size);
+
+                const buttonCell = document.createElement("td");
+
+                const downloadButton = document.createElement("button");
+                downloadButton.textContent = "Download";
+                downloadButton.onclick = function () { downloadFile(file.id, file.filename); };
+
+                const deleteButton = document.createElement("button");
+                deleteButton.textContent = "Delete";
+                deleteButton.className = "red";
+                deleteButton.onclick = function () { deleteFile(file.id); };
+
+                buttonCell.appendChild(downloadButton);
+                buttonCell.appendChild(deleteButton);
+                row.appendChild(nameCell);
+                row.appendChild(sizeCell);
+                row.appendChild(buttonCell);
+                table.appendChild(row);
+            }
+        }
+
+        function formatSize(bytes) {
+            if (bytes < 1024) return bytes + " B";
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+            return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+        }
+
+        async function uploadFile() {
+            const input = document.getElementById("file-input");
+            if (input.files.length === 0) {
+                showMessage("Pick a file first.");
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append("file", input.files[0]);
+
+            const response = await fetch("/files", {
+                method: "POST",
+                headers: authHeader(),
+                body: formData,
+            });
+
+            if (response.ok) {
+                showMessage("");
+                input.value = "";
+                loadFiles();
+            } else {
+                const data = await response.json();
+                showMessage(data.detail);
+            }
+        }
+
+        async function downloadFile(fileId, filename) {
+            // a normal link can't send the token, so fetch the file, then save it
+            const response = await fetch("/files/" + fileId, { headers: authHeader() });
+            if (!response.ok) {
+                showMessage("Download failed.");
+                return;
+            }
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = filename;
+            link.click();
+            URL.revokeObjectURL(url);
+        }
+
+        async function deleteFile(fileId) {
+            const response = await fetch("/files/" + fileId, {
+                method: "DELETE",
+                headers: authHeader(),
+            });
+            if (response.ok) {
+                loadFiles();
+            } else {
+                showMessage("Delete failed.");
+            }
+        }
+
+        // when the page opens: if we already have a token, skip the login screen
+        if (token) {
+            showDrive();
+        }
+    </script>
+</body>
+</html>
